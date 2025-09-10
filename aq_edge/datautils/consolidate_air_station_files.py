@@ -51,10 +51,22 @@ def standardize_columns(df: pd.DataFrame) -> pd.DataFrame:
     elif 'VOC_ppb' in df.columns:
         df = df.rename(columns={'VOC_ppb': 'VOC'})
 
+    # Standardize Temperature column name if needed
+    if 'Temp.' in df.columns:
+        df = df.rename(columns={'Temp.': 'TEM'})
+
+    # Standardize VOC column name if needed
+    if 'Hum.' in df.columns:
+        df = df.rename(columns={'Hum.': 'HUM'})
+
+    # Standardize VOC column name if needed
+    if 'Station' in df.columns:
+        df = df.rename(columns={'Station': 'STN'})
+
     return df
 
 
-def find_station_files(data_dir: str, station: str) -> Tuple[Optional[str], Optional[str]]:
+def find_station_files(data_dir: str, station: str) -> Tuple[List[str], List[str]]:
     """
     Find CSV and XLSX files for a given station in the data directory.
 
@@ -71,18 +83,16 @@ def find_station_files(data_dir: str, station: str) -> Tuple[Optional[str], Opti
     """
     try:
         files = [f for f in os.listdir(data_dir)
-                if f.startswith(station) and (f.endswith('.csv') or f.endswith('.xlsx'))]
-
-        csv_file = next((f for f in files if f.endswith('.csv')), None)
-        xlsx_file = next((f for f in files if f.endswith('.xlsx')), None)
-
-        return csv_file, xlsx_file
+                 if f.startswith(station) and (f.endswith('.csv') or f.endswith('.xlsx'))]
+        csv_files = [f for f in files if f.endswith('.csv')]
+        xlsx_files = [f for f in files if f.endswith('.xlsx')]
+        return csv_files, xlsx_files
     except OSError as e:
         logger.error(f"Error accessing directory {data_dir}: {e}")
         return None, None
 
 
-def load_station_data(data_dir: str, csv_file: str, xlsx_file: str, station: str) -> List[pd.DataFrame]:
+def load_station_data(data_dir: str, csv_files: List[str], xlsx_files: List[str], station: str) -> List[pd.DataFrame]:
     """
     Load and standardize data from CSV and XLSX files for a station.
 
@@ -98,27 +108,22 @@ def load_station_data(data_dir: str, csv_file: str, xlsx_file: str, station: str
 
     """
     dfs: List[pd.DataFrame] = []
-
-    # Read CSV
-    if csv_file:
+    for csv_file in csv_files:
         try:
             df_csv = pd.read_csv(os.path.join(data_dir, csv_file), sep=';')
             df_csv = standardize_columns(df_csv)
             dfs.append(df_csv)
-            logger.info(f"CSV loaded: {len(df_csv)} rows, columns: {list(df_csv.columns)}")
+            logger.info(f"CSV loaded: {csv_file}, {len(df_csv)} rows")
         except Exception as e:
-            logger.error(f"Error reading CSV for {station}: {e}")
-
-    # Read XLSX
-    if xlsx_file:
+            logger.error(f"Error reading CSV {csv_file} for {station}: {e}")
+    for xlsx_file in xlsx_files:
         try:
             df_xlsx = pd.read_excel(os.path.join(data_dir, xlsx_file))
             df_xlsx = standardize_columns(df_xlsx)
             dfs.append(df_xlsx)
-            logger.info(f"XLSX loaded: {len(df_xlsx)} rows, columns: {list(df_xlsx.columns)}")
+            logger.info(f"XLSX loaded: {xlsx_file}, {len(df_xlsx)} rows")
         except Exception as e:
-            logger.error(f"Error reading XLSX for {station}: {e}")
-
+            logger.error(f"Error reading XLSX {xlsx_file} for {station}: {e}")
     return dfs
 
 
@@ -272,7 +277,7 @@ def main() -> None:
     """
 
     data_dir = r'..\..\data\air\data Estaciones CHSS'#os.path.join(os.path.dirname(__file__), '..', 'data', 'air', 'data Estaciones CHSS')
-    output_dir = r'..\..\data\air'#os.path.join(os.path.dirname(__file__), '..', 'data', 'air')
+    output_dir = r'..\..\data\air\consolidated'#os.path.join(os.path.dirname(__file__), '..', 'data', 'air')
     stations: List[str] = ['APLAN', 'MHH', 'PFM', 'PGB', 'PLIB', 'USAM', 'UTEC']
 
     logger.info("Starting consolidation of air station files...")

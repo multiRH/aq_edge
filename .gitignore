@@ -9,6 +9,8 @@ experimental/calibration_results
 solar_forecasting/best_solar_model.pth
 *.csv
 *.pdf
+*.html
+*.parquet
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
