@@ -8,7 +8,7 @@ import pandas as pd
 import numpy as np
 import torch
 from torch.utils.data import Dataset, DataLoader, TensorDataset
-from sklearn.preprocessing import MinMaxScaler
+from sklearn.preprocessing import MinMaxScaler, StandardScaler, RobustScaler
 from typing import Dict, Tuple, List, Optional, Any
 import warnings
 warnings.filterwarnings('ignore')
@@ -72,76 +72,96 @@ def load_station_data(
     return station_data, combined_df
 
 def split_data(
-    X: pd.DataFrame,
-    y: pd.Series,
-    train_ratio: float = 0.7,
-    validation_ratio: float = 0.15
-) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.Series, pd.Series, pd.Series, pd.Index, pd.Index, pd.Index]:
+    data: pd.DataFrame,
+    train_end_timestamp: pd.Timestamp,
+    val_end_timestamp: pd.Timestamp
+) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
-    Split data into train, validation, and test sets.
+    Split data into train, validation, and test sets using fixed timestamps.
 
     Args:
-        X (pd.DataFrame): Feature data
-        y (pd.Series): Target data
-        train_ratio (float): Ratio for training data (default: 0.7)
-        validation_ratio (float): Ratio for validation data (default: 0.15)
+        data (pd.DataFrame): DataFrame with datetime index
+        train_end_timestamp (pd.Timestamp): Last timestamp for training set (inclusive)
+        val_end_timestamp (pd.Timestamp): Last timestamp for validation set (inclusive)
 
     Returns:
-        Tuple: X_train, X_val, X_test, y_train, y_val, y_test, train_timestamps, val_timestamps, test_timestamps
+        Tuple: train_data, val_data, test_data
     """
-    total_samples = len(X)
-    train_end = int(total_samples * train_ratio)
-    val_end = int(total_samples * (train_ratio + validation_ratio))
+    train_data = data[data.index <= train_end_timestamp]
+    val_data = data[(data.index > train_end_timestamp) & (data.index <= val_end_timestamp)]
+    test_data = data[data.index > val_end_timestamp]
+    return train_data, val_data, test_data
 
-    X_train = X.iloc[:train_end]
-    X_val = X.iloc[train_end:val_end]
-    X_test = X.iloc[val_end:]
-
-    y_train = y.iloc[:train_end]
-    y_val = y.iloc[train_end:val_end]
-    y_test = y.iloc[val_end:]
-
-    # Extract timestamps
-    train_timestamps = X.index[:train_end]
-    val_timestamps = X.index[train_end:val_end]
-    test_timestamps = X.index[val_end:]
-
-    return X_train, X_val, X_test, y_train, y_val, y_test, train_timestamps, val_timestamps, test_timestamps
-
-def scaling_data(
-    X_train: pd.DataFrame,
-    X_val: pd.DataFrame,
-    X_test: pd.DataFrame,
-    y_train: pd.Series,
-    y_val: pd.Series,
-    y_test: pd.Series
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, MinMaxScaler, MinMaxScaler]:
+def scale_data(
+    train_data: pd.DataFrame,
+    val_data: pd.DataFrame,
+    test_data: pd.DataFrame,
+    scaler: str
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Any]:
     """
-    Scale the split data using MinMaxScaler.
+    Scale data using different scalers, fitting only on training data.
 
     Args:
-        X_train, X_val, X_test (pd.DataFrame): Feature datasets
-        y_train, y_val, y_test (pd.Series): Target datasets
+        train_data (pd.DataFrame): Training data
+        val_data (pd.DataFrame): Validation data
+        test_data (pd.DataFrame): Test data
+        scaler (str): Type of scaler ('minmax', 'standard', 'robust')
 
     Returns:
-        Tuple: X_train_scaled, X_val_scaled, X_test_scaled, y_train_scaled, y_val_scaled, y_test_scaled, X_scaler, y_scaler
+        Tuple: scaled_train_data, scaled_val_data, scaled_test_data, train_scaler
     """
-    # Initialize scalers
-    X_scaler = MinMaxScaler()
-    y_scaler = MinMaxScaler()
 
-    # Fit and transform training data
-    X_train_scaled = X_scaler.fit_transform(X_train)
-    y_train_scaled = y_scaler.fit_transform(y_train.values.reshape(-1, 1)).flatten()
+    # Initialize scaler based on type
+    if scaler.lower() == 'minmax':
+        train_scaler = MinMaxScaler()
+    elif scaler.lower() == 'standard':
+        train_scaler = StandardScaler()
+    elif scaler.lower() == 'robust':
+        train_scaler = RobustScaler()
+    else:
+        raise ValueError(f"Unsupported scaler type: {scaler}. Use 'minmax', 'standard', or 'robust'.")
 
-    # Transform validation and test data using fitted scalers
-    X_val_scaled = X_scaler.transform(X_val)
-    X_test_scaled = X_scaler.transform(X_test)
+    logger.info(f"\n[OK] scaler: {scaler}")
+    # Fit scaler on training data and transform all datasets
+    scaled_train_data = train_scaler.fit_transform(train_data)
+    scaled_val_data = train_scaler.transform(val_data)
+    scaled_test_data = train_scaler.transform(test_data)
 
-    y_val_scaled = y_scaler.transform(y_val.values.reshape(-1, 1)).flatten()
-    y_test_scaled = y_scaler.transform(y_test.values.reshape(-1, 1)).flatten()
+    return scaled_train_data, scaled_val_data, scaled_test_data, train_scaler
 
-    return X_train_scaled, X_val_scaled, X_test_scaled, y_train_scaled, y_val_scaled, y_test_scaled, X_scaler, y_scaler
+def split_train_val_test_X_y(
+        train_data: pd.DataFrame,
+        val_data: pd.DataFrame,
+        test_data: pd.DataFrame,
+        features: List[str],
+        target: str
+) -> Tuple[pd.DataFrame, pd.Series, pd.DataFrame, pd.Series, pd.DataFrame, pd.Series]:
+    """
+    Split train, validation, and test data into features (X) and target (y).
+
+    Args:
+        train_data (pd.DataFrame): Training data
+        val_data (pd.DataFrame): Validation data
+        test_data (pd.DataFrame): Test data
+        features (List[str]): Feature column names
+        target (str): Target column name
+
+    Returns:
+        Tuple: X_train, y_train, X_val, y_val, X_test, y_test
+    """
+    # Split training data
+    X_train = train_data[features].copy()
+    y_train = train_data[target].copy()
+
+    # Split validation data
+    X_val = val_data[features].copy()
+    y_val = val_data[target].copy()
+
+    # Split test data
+    X_test = test_data[features].copy()
+    y_test = test_data[target].copy()
+
+    return X_train, y_train, X_val, y_val, X_test, y_test
 
 def create_sequences(
     X_scaled: np.ndarray,
@@ -183,42 +203,6 @@ def create_sequences(
 
     return np.array(X_sequences), np.array(y_sequences), input_timestamps, output_timestamps
 
-def get_prediction_timestamps(
-    timestamps: pd.Index,
-    input_sequence_length: int,
-    output_sequence_length: int = 1
-) -> pd.Index:
-    """
-    Generate timestamps for future predictions based on the last available timestamp.
-
-    Args:
-        timestamps (pd.Index): Original timestamps
-        input_sequence_length (int): Length of input sequences used for prediction
-        output_sequence_length (int): Number of future predictions
-
-    Returns:
-        pd.Index: Timestamps for future predictions
-    """
-    if len(timestamps) < input_sequence_length:
-        raise ValueError("Not enough timestamps for the required sequence length")
-
-    # Get the frequency of the time series
-    freq = pd.infer_freq(timestamps)
-    if freq is None:
-        # Try to infer from the most common time difference
-        time_diffs = timestamps[1:] - timestamps[:-1]
-        most_common_diff = pd.Series(time_diffs).mode()[0]
-        freq = most_common_diff
-
-    # Generate future timestamps
-    last_timestamp = timestamps[-1]
-    future_timestamps = pd.date_range(
-        start=last_timestamp + pd.Timedelta(freq),
-        periods=output_sequence_length,
-        freq=freq
-    )
-
-    return future_timestamps
 
 def create_datasets(
     X_train_seq: np.ndarray,
@@ -299,160 +283,94 @@ def prepare_data(
     data: pd.DataFrame,
     features: List[str],
     target: str,
-    train_ratio: float = 0.7,
-    validation_ratio: float = 0.15,
+    train_end_timestamp: pd.Timestamp,
+    val_end_timestamp: pd.Timestamp,
     input_sequence_length: int = 24,
     output_sequence_length: int = 1,
-    batch_size: int = 32
+    batch_size: int = 32,
+    scaler: str = 'standard'
 ) -> Dict[str, Any]:
     """
-    Comprehensive data preparation function for time series forecasting.
-
+    Data preparation using fixed timestamp splits and a single scaler.
     Args:
         data (pd.DataFrame): Input DataFrame with datetime index
         features (List[str]): List of feature column names
         target (str): Target column name
-        train_ratio (float): Ratio for training data (default: 0.7)
-        validation_ratio (float): Ratio for validation data (default: 0.15)
+        train_end_timestamp (pd.Timestamp): Last timestamp for training set (inclusive)
+        val_end_timestamp (pd.Timestamp): Last timestamp for validation set (inclusive)
         input_sequence_length (int): Length of input sequences (default: 24)
         output_sequence_length (int): Length of output sequences (default: 1)
         batch_size (int): Batch size for dataloaders (default: 32)
-
     Returns:
         Dict[str, Any]: Dictionary containing all prepared data components
     """
-    # Step 1: Split into features (X) and target (y)
-    X = data[features].copy()
-    y = data[target].copy()
-
-    print(f"Data shape: {data.shape}")
-    print(f"Features: {features}")
-    print(f"Target: {target}")
-    print(f"X shape: {X.shape}, y shape: {y.shape}")
-
-    # Step 2: Split data into train/validation/test
-    X_train, X_val, X_test, y_train, y_val, y_test, train_timestamps, val_timestamps, test_timestamps = split_data(
-        X, y, train_ratio, validation_ratio
+    # Step 1: Split data into train/val/test using timestamps
+    all_cols = features + [target]
+    train_data, val_data, test_data = split_data(
+        data[all_cols], train_end_timestamp, val_end_timestamp
     )
 
-    print(f"\nData splits:")
-    print(f"Train: X {X_train.shape}, y {y_train.shape}")
-    print(f"Validation: X {X_val.shape}, y {y_val.shape}")
-    print(f"Test: X {X_test.shape}, y {y_test.shape}")
-
-    # Step 3: Scale the data
-    X_train_scaled, X_val_scaled, X_test_scaled, y_train_scaled, y_val_scaled, y_test_scaled, X_scaler, y_scaler = scaling_data(
-        X_train, X_val, X_test, y_train, y_val, y_test
+    # Step 2: Scale all columns using a single scaler
+    train_scaled, val_scaled, test_scaled, scaler = scale_data(
+        train_data, val_data, test_data, scaler=scaler
     )
 
-    print(f"\nScaled data shapes:")
-    print(f"X_train_scaled: {X_train_scaled.shape}, y_train_scaled: {y_train_scaled.shape}")
+    # Step 3: Split X and y from scaled arrays
+    X_train, y_train, X_val, y_val, X_test, y_test = split_train_val_test_X_y(
+        train_data, val_data, test_data, features, target
+    )
 
-    # Step 4: Create sequences
+    # Step 4: Get timestamps
+    train_timestamps = train_data.index
+    val_timestamps = val_data.index
+    test_timestamps = test_data.index
+
+    # Step 5: Create sequences
     X_train_seq, y_train_seq, train_input_timestamps, train_output_timestamps = create_sequences(
-        X_train_scaled, y_train_scaled, train_timestamps, input_sequence_length, output_sequence_length
+        X_train, y_train, train_timestamps, input_sequence_length, output_sequence_length
     )
     X_val_seq, y_val_seq, val_input_timestamps, val_output_timestamps = create_sequences(
-        X_val_scaled, y_val_scaled, val_timestamps, input_sequence_length, output_sequence_length
+        X_val, y_val, val_timestamps, input_sequence_length, output_sequence_length
     )
     X_test_seq, y_test_seq, test_input_timestamps, test_output_timestamps = create_sequences(
-        X_test_scaled, y_test_scaled, test_timestamps, input_sequence_length, output_sequence_length
+        X_test, y_test, test_timestamps, input_sequence_length, output_sequence_length
     )
 
-    print(f"\nSequence shapes:")
-    print(f"X_train_seq: {X_train_seq.shape}, y_train_seq: {y_train_seq.shape}")
-    print(f"X_val_seq: {X_val_seq.shape}, y_val_seq: {y_val_seq.shape}")
-    print(f"X_test_seq: {X_test_seq.shape}, y_test_seq: {y_test_seq.shape}")
-
-    # Step 5: Create datasets
+    # Step 6: Create datasets and dataloaders
     train_dataset, validation_dataset, test_dataset = create_datasets(
         X_train_seq, y_train_seq, X_val_seq, y_val_seq, X_test_seq, y_test_seq
     )
-
-    print(f"\nDatasets created:")
-    print(f"Train dataset: {len(train_dataset)} samples")
-    print(f"Validation dataset: {len(validation_dataset)} samples")
-    print(f"Test dataset: {len(test_dataset)} samples")
-
-    # Step 6: Create dataloaders
     train_dataloader, validation_dataloader, test_dataloader = create_dataloaders(
         train_dataset, validation_dataset, test_dataset, batch_size
     )
 
-    print(f"\nDataloaders created with batch size: {batch_size}")
-    print(f"Train batches: {len(train_dataloader)}")
-    print(f"Validation batches: {len(validation_dataloader)}")
-    print(f"Test batches: {len(test_dataloader)}")
-
-    # Return comprehensive dictionary with all components
     return {
-        # Original data
-        'X': X,
-        'y': y,
-
-        # Split data
-        'X_train': X_train,
-        'X_val': X_val,
-        'X_test': X_test,
-        'y_train': y_train,
-        'y_val': y_val,
-        'y_test': y_test,
-
-        # Timestamps for splits
+        'X_train': X_train, 'y_train': y_train,
+        'X_val': X_val, 'y_val': y_val,
+        'X_test': X_test, 'y_test': y_test,
         'train_timestamps': train_timestamps,
         'val_timestamps': val_timestamps,
         'test_timestamps': test_timestamps,
-
-        # Scaled data
-        'X_train_scaled': X_train_scaled,
-        'X_val_scaled': X_val_scaled,
-        'X_test_scaled': X_test_scaled,
-        'y_train_scaled': y_train_scaled,
-        'y_val_scaled': y_val_scaled,
-        'y_test_scaled': y_test_scaled,
-
-        # Scalers
-        'X_scaler': X_scaler,
-        'y_scaler': y_scaler,
-
-        # Sequences
-        'X_train_seq': X_train_seq,
-        'y_train_seq': y_train_seq,
-        'X_val_seq': X_val_seq,
-        'y_val_seq': y_val_seq,
-        'X_test_seq': X_test_seq,
-        'y_test_seq': y_test_seq,
-
-        # Sequence timestamps
+        'scaler': scaler,
+        'X_train_seq': X_train_seq, 'y_train_seq': y_train_seq,
+        'X_val_seq': X_val_seq, 'y_val_seq': y_val_seq,
+        'X_test_seq': X_test_seq, 'y_test_seq': y_test_seq,
         'train_input_timestamps': train_input_timestamps,
         'train_output_timestamps': train_output_timestamps,
         'val_input_timestamps': val_input_timestamps,
         'val_output_timestamps': val_output_timestamps,
         'test_input_timestamps': test_input_timestamps,
         'test_output_timestamps': test_output_timestamps,
-
-        # Datasets
         'train_dataset': train_dataset,
         'validation_dataset': validation_dataset,
         'test_dataset': test_dataset,
-
-        # DataLoaders
         'train_dataloader': train_dataloader,
         'validation_dataloader': validation_dataloader,
         'test_dataloader': test_dataloader,
-
-        # Metadata
         'input_sequence_length': input_sequence_length,
         'output_sequence_length': output_sequence_length,
         'batch_size': batch_size,
         'num_features': len(features),
         'feature_names': features,
         'target_name': target,
-
-        # Utility function for future predictions
-        'get_prediction_timestamps': lambda: get_prediction_timestamps(
-            data.index, input_sequence_length, output_sequence_length
-        )
     }
-
-

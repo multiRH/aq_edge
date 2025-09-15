@@ -9,18 +9,20 @@ from matplotlib import pyplot as plt
 from sklearn.model_selection import train_test_split
 
 # Import all modules
-from aq_edge.utils.logging import LoggerHandler
 from aq_edge.datautils.air_quality_analysis import load_station_data
 from aq_edge.datautils.preprocessing import prepare_data
 from aq_edge.modelzoo.lstm import BaseLSTM, AttentionLSTM
 from aq_edge.modelzoo.model_factory import EarlyStopping
 from aq_edge.evaluation.metrics import calculate_horizon_metrics
 from aq_edge.utils.visualization import plot_horizon_predictions, plot_horizon_metrics
+from aq_edge.utils.logging import LoggerHandler
+from aq_edge.utils.config import ConfigHandler
 
 def main():
     pass
 
 if __name__ == "__main__":
+
     # Set random seeds for reproducibility
     torch.manual_seed(42)
     np.random.seed(42)
@@ -58,22 +60,23 @@ if __name__ == "__main__":
         # -----------------------------
 
         input_sequence_length = 12  # 24 hours of history
-        output_sequence_length = 6  # Predict next hour
+        output_sequence_length = 12  # Predict next hour
         batch_size     = 32
-        train_ratio     = 0.7
-        validation_ratio= 0.15
         batch_size     = 32
+        train_end_timestamp = '2025-07-31 00:00:00'
+        val_end_timestamp = '2025-08-15 00:00:00'
 
         # Use the new prepare_data function
         prepared_data = prepare_data(
             data=data,
             features=features,
             target=target,
-            train_ratio=train_ratio,
-            validation_ratio=validation_ratio,
+            train_end_timestamp=train_end_timestamp,
+            val_end_timestamp=val_end_timestamp,
             input_sequence_length=input_sequence_length,  # 24 hours of history
             output_sequence_length=output_sequence_length,  # Predict next hour
-            batch_size=batch_size
+            batch_size=batch_size,
+            scaler='robust'
         )
 
         train_dataloader = prepared_data['train_dataloader']
@@ -91,8 +94,8 @@ if __name__ == "__main__":
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         print(f"Using device: {device}")
 
-        model = AttentionLSTM(input_size=len(features), output_size=output_sequence_length).to(device)
-        # model = BaseLSTM(input_size=len(features), output_size=output_sequence_length).to(device)
+        # model = AttentionLSTM(input_size=len(features), output_size=output_sequence_length).to(device)
+        model = BaseLSTM(input_size=len(features), output_size=output_sequence_length).to(device)
         # optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
         optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-5)
         criterion = nn.MSELoss()
@@ -102,7 +105,7 @@ if __name__ == "__main__":
         # -----------------------------
         # 4. Training Loop
         # -----------------------------
-        num_epochs = 25
+        num_epochs = 100
         early_stopping = EarlyStopping(patience=5)
         train_losses, val_losses = [], []
 

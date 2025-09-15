@@ -11,6 +11,7 @@ solar_forecasting/best_solar_model.pth
 *.pdf
 *.html
 *.parquet
+config.yaml
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
