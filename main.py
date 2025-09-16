@@ -180,35 +180,51 @@ if __name__ == "__main__":
         # -----------------------------
         # 4. Check MLflow Model Registry
         # -----------------------------
-        model_name = f"{config.get('data.station')}_{model_type}_model"
+        # Generate version-aware model name
+        num_epochs = training_config['num_epochs']
+        learning_rate = training_config['learning_rate']
+        batch_size = training_config['batch_size']
+
+        # Create model name with key hyperparameters
+        model_name = f"{config.get('data.station')}_{model_type}_e{num_epochs}_lr{str(learning_rate).replace('.', '')}_b{batch_size}_model"
+
+        logger.info(f"Model name with hyperparameters: {model_name}")
         model_version = None
 
         if mlflow_enabled:
             logger.info(f"Checking MLflow model registry for: {model_name}")
-            try:
-                # Try to get and load existing model
-                model_version = mlflow_handler.get_latest_model_version(model_name)
 
-                if model_version:
-                    logger.info(f"Found model {model_name} version {model_version}")
-                    model_uri = f"models:/{model_name}/{model_version}"
+            # Add force_retrain check
+            force_retrain = config.get('training.force_retrain', False)
 
-                    loaded_model = mlflow_handler.load_model(model_uri)
-                    if loaded_model:
-                        model = loaded_model.to(device)
-                        logger.info("Model loaded from registry, skipping training")
-                        skip_training = True
-                    else:
-                        logger.warning("Failed to load model, proceeding with training")
-                        skip_training = False
-                else:
-                    logger.info("No existing model found, proceeding with training")
-                    skip_training = False
-
-            except Exception as e:
-                logger.error(f"Registry check failed: {str(e)}")
-                logger.info("Proceeding with training due to registry issues")
+            if force_retrain:
+                logger.info("Force retrain enabled - skipping model registry check")
                 skip_training = False
+            else:
+                try:
+                    # Try to get and load existing model
+                    model_version = mlflow_handler.get_latest_model_version(model_name)
+
+                    if model_version:
+                        logger.info(f"Found model {model_name} version {model_version}")
+                        model_uri = f"models:/{model_name}/{model_version}"
+
+                        loaded_model = mlflow_handler.load_model(model_uri)
+                        if loaded_model:
+                            model = loaded_model.to(device)
+                            logger.info("Model loaded from registry, skipping training")
+                            skip_training = True
+                        else:
+                            logger.warning("Failed to load model, proceeding with training")
+                            skip_training = False
+                    else:
+                        logger.info("No existing model found, proceeding with training")
+                        skip_training = False
+
+                except Exception as e:
+                    logger.error(f"Registry check failed: {str(e)}")
+                    logger.info("Proceeding with training due to registry issues")
+                    skip_training = False
         else:
             skip_training = False
 
@@ -380,11 +396,12 @@ if __name__ == "__main__":
             fig_loss = plot_loss_curves(
                 train_losses=train_losses,
                 val_losses=val_losses,
-                figsize=(8, 6)
+                figsize=(8, 6),
+                title=f"Training and Validation Loss - {station}"
             )
 
             if viz_config.get('save_plots', False):
-                plot_path = f"{plot_dir}/loss_curves.png"
+                plot_path = f"{plot_dir}/loss_curves_{station}.png"
                 fig_loss.savefig(plot_path, dpi=150, bbox_inches='tight')
                 logger.info(f"Loss curves plot saved to {plot_path}")
 
@@ -398,11 +415,12 @@ if __name__ == "__main__":
                 fig_r2 = plot_r2_curves(
                     train_r2_scores=train_r2_scores,
                     val_r2_scores=val_r2_scores,
-                    figsize=(8, 6)
+                    figsize=(8, 6),
+                    title=f"Training and Validation R² - {station}"
                 )
 
                 if viz_config.get('save_plots', False):
-                    r2_plot_path = f"{plot_dir}/r2_curves.png"
+                    r2_plot_path = f"{plot_dir}/r2_curves_{station}.png"
                     fig_r2.savefig(r2_plot_path, dpi=150, bbox_inches='tight')
                     logger.info(f"R² curves plot saved to {r2_plot_path}")
 
@@ -425,11 +443,12 @@ if __name__ == "__main__":
                 ground_truth=targets,
                 forecasts=predictions,
                 horizons=[1, 3, 9, 12],
-                figsize=(15, 10)
+                figsize=(15, 10),
+                title=f"Forecast vs Ground Truth - {station}"
             )
 
             if viz_config.get('save_plots', False):
-                forecast_plot_path = f"{plot_dir}/forecast_vs_ground_truth.png"
+                forecast_plot_path = f"{plot_dir}/forecast_vs_ground_truth_{station}.png"
                 fig_forecast.savefig(forecast_plot_path, dpi=150, bbox_inches='tight')
                 logger.info(f"Forecast vs ground truth plot saved to {forecast_plot_path}")
 
@@ -457,7 +476,10 @@ if __name__ == "__main__":
 
         # Plot metrics per horizon
         logger.info("Creating horizon metrics plot...")
-        fig_metrics = plot_horizon_metrics(horizon_metrics)
+        fig_metrics = plot_horizon_metrics(
+            horizon_metrics,
+            title=f"Horizon Metrics - {station}"
+        )
         mlflow_handler.log_plot(fig_metrics, "horizon_metrics")
 
         # MLflow: Log the trained model

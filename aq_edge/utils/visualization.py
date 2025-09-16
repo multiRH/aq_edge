@@ -38,7 +38,7 @@ def plot_horizon_predictions(predictions, truths, horizon_idx=0):
     plt.show()
 
 
-def plot_horizon_metrics(metrics):
+def plot_horizon_metrics(metrics, title=None):
     """Plot metrics across forecast horizons"""
     # Check if metrics are empty
     if not metrics or all(len(values) == 0 for values in metrics.values()):
@@ -58,6 +58,10 @@ def plot_horizon_metrics(metrics):
 
     fig, axes = plt.subplots(2, 2, figsize=(18, 10))
     axes = axes.flatten()
+
+    # Set main title if provided
+    if title:
+        fig.suptitle(title, fontsize=16, fontweight='bold')
 
     for i, (metric_name, values) in enumerate(metrics.items()):
         ax = axes[i]
@@ -86,11 +90,14 @@ def plot_horizon_metrics(metrics):
 
     plt.tight_layout()
     plt.show()
+    return fig
+
 
 def plot_loss_curves(train_losses: List[float],
                     val_losses: List[float],
                     figsize: Tuple[int, int] = (8, 6),
-                    save_path: Optional[str] = None) -> plt.Figure:
+                    save_path: Optional[str] = None,
+                    title: Optional[str] = None) -> plt.Figure:
     """
     Plot training and validation MSE loss curves.
 
@@ -99,6 +106,7 @@ def plot_loss_curves(train_losses: List[float],
         val_losses: List of validation losses per epoch
         figsize: Figure size as (width, height)
         save_path: Optional path to save the plot
+        title: Optional custom title for the plot
 
     Returns:
         matplotlib Figure object
@@ -109,7 +117,13 @@ def plot_loss_curves(train_losses: List[float],
     ax.plot(val_losses, label="Val Loss", color='red', linewidth=2)
     ax.set_xlabel("Epoch")
     ax.set_ylabel("MSE Loss")
-    ax.set_title("Training & Validation Loss")
+
+    # Use custom title if provided, otherwise use default
+    if title:
+        ax.set_title(title)
+    else:
+        ax.set_title("Training & Validation Loss")
+
     ax.legend()
     ax.grid(True, alpha=0.3)
 
@@ -123,7 +137,8 @@ def plot_loss_curves(train_losses: List[float],
 def plot_r2_curves(train_r2_scores: List[float],
                    val_r2_scores: List[float],
                    figsize: Tuple[int, int] = (8, 6),
-                   save_path: Optional[str] = None) -> plt.Figure:
+                   save_path: Optional[str] = None,
+                   title: Optional[str] = None) -> plt.Figure:
     """
     Plot training and validation R² score curves.
 
@@ -132,6 +147,7 @@ def plot_r2_curves(train_r2_scores: List[float],
         val_r2_scores: List of validation R² scores per epoch
         figsize: Figure size as (width, height)
         save_path: Optional path to save the plot
+        title: Optional custom title for the plot
 
     Returns:
         matplotlib Figure object
@@ -142,7 +158,13 @@ def plot_r2_curves(train_r2_scores: List[float],
     ax.plot(val_r2_scores, label="Val R²", color='orange', linewidth=2)
     ax.set_xlabel("Epoch")
     ax.set_ylabel("R² Score")
-    ax.set_title("Training & Validation R² Score")
+
+    # Use custom title if provided, otherwise use default
+    if title:
+        ax.set_title(title)
+    else:
+        ax.set_title("Training & Validation R² Score")
+
     ax.legend()
     ax.grid(True, alpha=0.3)
 
@@ -153,12 +175,14 @@ def plot_r2_curves(train_r2_scores: List[float],
 
     return fig
 
+
 def plot_forecast_vs_ground_truth(timestamps: List,
                                  ground_truth: np.ndarray,
                                  forecasts: np.ndarray,
                                  horizons: List[int] = [1, 3, 9, 12],
                                  figsize: Tuple[int, int] = (15, 10),
-                                 save_path: Optional[str] = None) -> plt.Figure:
+                                 save_path: Optional[str] = None,
+                                 title: Optional[str] = None) -> plt.Figure:
     """
     Plot forecasted values vs ground truth for specific horizons with timestamps.
     Each horizon is shifted by its respective time steps.
@@ -170,6 +194,7 @@ def plot_forecast_vs_ground_truth(timestamps: List,
         horizons: List of horizon indices to plot (1-indexed)
         figsize: Figure size as (width, height)
         save_path: Optional path to save the plot
+        title: Optional custom title for the plot
 
     Returns:
         matplotlib Figure object
@@ -177,6 +202,10 @@ def plot_forecast_vs_ground_truth(timestamps: List,
     n_horizons = len(horizons)
     fig, axes = plt.subplots(2, 2, figsize=figsize)
     axes = axes.flatten()
+
+    # Set main title if provided
+    if title:
+        fig.suptitle(title, fontsize=16, fontweight='bold')
 
     # Align timestamps with the actual number of samples
     n_samples = ground_truth.shape[0]
