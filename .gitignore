@@ -1,6 +1,7 @@
 # Custom
 logs/
 mlruns/
+mlartifacts/
 models/
 plots/
 weights/
@@ -12,6 +13,8 @@ solar_forecasting/best_solar_model.pth
 *.html
 *.parquet
 config.yaml
+.env
+test.py
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

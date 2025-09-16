@@ -1,8 +1,7 @@
 import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt
-
-
+from typing import List, Optional, Tuple
 
 
 # 2.8 Plot Horizon-wise Predictions vs. Truth
@@ -85,6 +84,136 @@ def plot_horizon_metrics(metrics):
             ax.annotate(f'{v:.3f}', (j + 1, v), textcoords="offset points",
                         xytext=(0, 10), ha='center', fontsize=9)
 
-
     plt.tight_layout()
     plt.show()
+
+def plot_loss_curves(train_losses: List[float],
+                    val_losses: List[float],
+                    figsize: Tuple[int, int] = (8, 6),
+                    save_path: Optional[str] = None) -> plt.Figure:
+    """
+    Plot training and validation MSE loss curves.
+
+    Args:
+        train_losses: List of training losses per epoch
+        val_losses: List of validation losses per epoch
+        figsize: Figure size as (width, height)
+        save_path: Optional path to save the plot
+
+    Returns:
+        matplotlib Figure object
+    """
+    fig, ax = plt.subplots(1, 1, figsize=figsize)
+
+    ax.plot(train_losses, label="Train Loss", color='blue', linewidth=2)
+    ax.plot(val_losses, label="Val Loss", color='red', linewidth=2)
+    ax.set_xlabel("Epoch")
+    ax.set_ylabel("MSE Loss")
+    ax.set_title("Training & Validation Loss")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+
+    if save_path:
+        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+
+    return fig
+
+def plot_r2_curves(train_r2_scores: List[float],
+                   val_r2_scores: List[float],
+                   figsize: Tuple[int, int] = (8, 6),
+                   save_path: Optional[str] = None) -> plt.Figure:
+    """
+    Plot training and validation R² score curves.
+
+    Args:
+        train_r2_scores: List of training R² scores per epoch
+        val_r2_scores: List of validation R² scores per epoch
+        figsize: Figure size as (width, height)
+        save_path: Optional path to save the plot
+
+    Returns:
+        matplotlib Figure object
+    """
+    fig, ax = plt.subplots(1, 1, figsize=figsize)
+
+    ax.plot(train_r2_scores, label="Train R²", color='green', linewidth=2)
+    ax.plot(val_r2_scores, label="Val R²", color='orange', linewidth=2)
+    ax.set_xlabel("Epoch")
+    ax.set_ylabel("R² Score")
+    ax.set_title("Training & Validation R² Score")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+
+    if save_path:
+        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+
+    return fig
+
+def plot_forecast_vs_ground_truth(timestamps: List,
+                                 ground_truth: np.ndarray,
+                                 forecasts: np.ndarray,
+                                 horizons: List[int] = [1, 3, 9, 12],
+                                 figsize: Tuple[int, int] = (15, 10),
+                                 save_path: Optional[str] = None) -> plt.Figure:
+    """
+    Plot forecasted values vs ground truth for specific horizons with timestamps.
+    Each horizon is shifted by its respective time steps.
+
+    Args:
+        timestamps: List of timestamps corresponding to the base predictions
+        ground_truth: Ground truth values of shape (n_samples, n_horizons)
+        forecasts: Forecasted values of shape (n_samples, n_horizons)
+        horizons: List of horizon indices to plot (1-indexed)
+        figsize: Figure size as (width, height)
+        save_path: Optional path to save the plot
+
+    Returns:
+        matplotlib Figure object
+    """
+    n_horizons = len(horizons)
+    fig, axes = plt.subplots(2, 2, figsize=figsize)
+    axes = axes.flatten()
+
+    # Align timestamps with the actual number of samples
+    n_samples = ground_truth.shape[0]
+    base_timestamps = timestamps[:n_samples] if len(timestamps) > n_samples else timestamps
+
+    for i, horizon in enumerate(horizons):
+        ax = axes[i]
+        horizon_idx = horizon - 1  # Convert to 0-indexed
+
+        # Extract data for this horizon
+        gt_values = ground_truth[:, horizon_idx]
+        pred_values = forecasts[:, horizon_idx]
+
+        # Create shifted timestamps for this horizon
+        # Each horizon represents a forecast `horizon` steps into the future
+        shifted_timestamps = base_timestamps[horizon:]  # Shift by horizon steps
+
+        # Align the data with the shifted timestamps
+        aligned_gt = gt_values[:len(shifted_timestamps)]
+        aligned_pred = pred_values[:len(shifted_timestamps)]
+
+        # Create time series plot
+        ax.plot(shifted_timestamps, aligned_gt, label='Ground Truth', color='blue', linewidth=1.5, alpha=0.8)
+        ax.plot(shifted_timestamps, aligned_pred, label='Forecast', color='red', linewidth=1.5, alpha=0.8)
+
+        ax.set_xlabel('Time')
+        ax.set_ylabel('CO2 Value')
+        ax.set_title(f'Forecast vs Ground Truth - Horizon {horizon} (Shift: +{horizon})')
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+
+        # Rotate x-axis labels for better readability
+        ax.tick_params(axis='x', rotation=45)
+
+    plt.tight_layout()
+
+    if save_path:
+        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+
+    return fig
