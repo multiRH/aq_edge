@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt
 from typing import List, Optional, Tuple
+import plotly.graph_objects as go
 
 
 # 2.8 Plot Horizon-wise Predictions vs. Truth
@@ -246,3 +247,101 @@ def plot_forecast_vs_ground_truth(timestamps: List,
         plt.savefig(save_path, dpi=150, bbox_inches='tight')
 
     return fig
+
+
+def plot_single_horizon_forecast(timestamps: List,
+                                ground_truth: np.ndarray,
+                                forecasts: np.ndarray,
+                                horizon: int = 1,
+                                figsize: Tuple[int, int] = (12, 6),
+                                save_path: Optional[str] = None,
+                                title: Optional[str] = None) -> Tuple[plt.Figure, go.Figure]:
+    """
+    Plot forecasted values vs ground truth for a single horizon with timestamps.
+    Creates both static (matplotlib) and interactive (plotly) versions.
+    The horizon is shifted by its respective time steps.
+
+    Args:
+        timestamps: List of timestamps corresponding to the base predictions
+        ground_truth: Ground truth values of shape (n_samples, n_horizons)
+        forecasts: Forecasted values of shape (n_samples, n_horizons)
+        horizon: Horizon index to plot (1-indexed)
+        figsize: Figure size as (width, height)
+        save_path: Optional path to save the plot (without extension)
+        title: Optional custom title for the plot
+
+    Returns:
+        Tuple of (matplotlib Figure object, plotly Figure object)
+    """
+    horizon_idx = horizon - 1  # Convert to 0-indexed
+
+    # Align timestamps with the actual number of samples
+    n_samples = ground_truth.shape[0]
+    base_timestamps = timestamps[:n_samples] if len(timestamps) > n_samples else timestamps
+
+    # Extract data for this horizon
+    gt_values = ground_truth[:, horizon_idx]
+    pred_values = forecasts[:, horizon_idx]
+
+    # Create shifted timestamps for this horizon
+    shifted_timestamps = base_timestamps[horizon:]
+
+    # Align the data with the shifted timestamps
+    aligned_gt = gt_values[:len(shifted_timestamps)]
+    aligned_pred = pred_values[:len(shifted_timestamps)]
+
+    # Use custom title if provided
+    plot_title = title if title else f'Forecast vs Ground Truth - Horizon {horizon} (Shift: +{horizon})'
+
+    # Create matplotlib plot
+    fig_mpl, ax = plt.subplots(1, 1, figsize=figsize)
+    ax.plot(shifted_timestamps, aligned_gt, label='Ground Truth', color='blue', linewidth=1.5, alpha=0.8)
+    ax.plot(shifted_timestamps, aligned_pred, label='Forecast', color='red', linewidth=1.5, alpha=0.8)
+    ax.set_xlabel('Time')
+    ax.set_ylabel('CO2 Value')
+    ax.set_title(plot_title)
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    ax.tick_params(axis='x', rotation=45)
+    plt.tight_layout()
+
+    # Save matplotlib plot as PNG
+    if save_path:
+        plt.savefig(f"{save_path}.png", dpi=150, bbox_inches='tight')
+
+    # Create plotly plot
+    fig_plotly = go.Figure()
+
+    fig_plotly.add_trace(go.Scatter(
+        x=shifted_timestamps,
+        y=aligned_gt,
+        mode='lines',
+        name='Ground Truth',
+        line=dict(color='blue', width=2),
+        opacity=0.8
+    ))
+
+    fig_plotly.add_trace(go.Scatter(
+        x=shifted_timestamps,
+        y=aligned_pred,
+        mode='lines',
+        name='Forecast',
+        line=dict(color='red', width=2),
+        opacity=0.8
+    ))
+
+    fig_plotly.update_layout(
+        title=plot_title,
+        xaxis_title='Time',
+        yaxis_title='CO2 Value',
+        hovermode='x unified',
+        template='plotly_white',
+        width=figsize[0] * 100,
+        height=figsize[1] * 100
+    )
+
+    # Save plotly plot as HTML
+    if save_path:
+        fig_plotly.write_html(f"{save_path}.html")
+
+    return fig_mpl, fig_plotly

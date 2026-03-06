@@ -10,6 +10,7 @@ from pathlib import Path
 import logging
 from dotenv import load_dotenv
 import random
+from mlflow.tracking import MlflowClient
 from aq_edge.utils.logging import LoggerHandler
 
 def generate_custom_run_name() -> str:
@@ -46,6 +47,7 @@ class MLflowHandler:
         self.run_name = run_name
         self.run_started = False
         self.enabled = enabled
+        self.active_run = None
 
         # Load environment variables and setup MLflow
         self._load_environment()
@@ -103,7 +105,7 @@ class MLflowHandler:
 
         def _start():
             mlflow.set_experiment(self.experiment_name)
-            mlflow.start_run(run_name=self.run_name)
+            self.active_run = mlflow.start_run(run_name=self.run_name)
             self.run_started = True
 
             # Log all configuration parameters
@@ -114,6 +116,7 @@ class MLflowHandler:
         if not success:
             self.run_started = False
             self.enabled = False
+            self.active_run = None
         return success
 
     def _log_config_params(self, config: Dict[str, Any], prefix: str = "") -> None:
@@ -158,6 +161,18 @@ class MLflowHandler:
 
         return self._safe_execute(_log)
 
+    def log_tags(self, tags: Dict[str, str]):
+        """Log tags to MLflow run"""
+        if not self.enabled or not self.active_run:
+            return
+
+        try:
+            for key, value in tags.items():
+                mlflow.set_tag(key, str(value))
+            self.logger.info(f"Logged {len(tags)} tags to MLflow")
+        except Exception as e:
+            self.logger.error(f"Failed to log tags: {str(e)}")
+
     def log_model(self, model: torch.nn.Module, model_name: str = "pytorch_model") -> bool:
         """Log PyTorch model to MLflow using the current API."""
         if not self.enabled or not self.run_started:
@@ -167,15 +182,15 @@ class MLflowHandler:
             # Use the updated MLflow API that doesn't trigger deprecation warnings
             mlflow.pytorch.log_model(
                 pytorch_model=model,
-                name=model_name,  # This is still required for artifact storage path
-                pip_requirements=None,  # Explicitly set to avoid auto-inference warnings
+                artifact_path=model_name,
+                pip_requirements=None,
                 extra_pip_requirements=None,
                 conda_env=None,
                 code_paths=None,
                 signature=None,
                 input_example=None,
                 await_registration_for=None,
-                registered_model_name=None,  # Don't auto-register to model registry
+                registered_model_name=None,
                 metadata=None
             )
             return True
@@ -247,6 +262,7 @@ class MLflowHandler:
 
         success = self._safe_execute(_end)
         self.run_started = False
+        self.active_run = None
         return success
 
     def disable(self) -> None:
@@ -262,8 +278,7 @@ class MLflowHandler:
     def get_latest_model_version(self, model_name):
         """Get the latest version of a registered model"""
         try:
-            import mlflow
-            client = mlflow.tracking.MlflowClient()
+            client = MlflowClient()
 
             # Get all versions of the model
             versions = client.get_latest_versions(model_name, stages=["Production", "Staging", "None"])
@@ -288,30 +303,42 @@ class MLflowHandler:
             return None
 
         try:
-            import mlflow.pytorch
             return mlflow.pytorch.load_model(model_uri)
         except Exception as e:
             self.logger.error(f"Failed to load model: {str(e)}")
             raise
 
-    def register_model(self, model, model_name: str, stage: str = "Production"):
-        """Register model to MLflow registry."""
-        if not self.enabled:
-            return
+    def register_model(self, model, model_name: str, stage: str = "Production", description: str = None):
+        """Register model to MLflow Model Registry with optional description"""
+        if not self.enabled or not self.active_run:
+            return None
 
         try:
-            import mlflow.pytorch
-            mlflow.pytorch.log_model(model, "model", registered_model_name=model_name)
+            # Log model to current run first
+            mlflow.pytorch.log_model(model, "model")
+
+            # Get the model URI
+            run_id = self.active_run.info.run_id
+            model_uri = f"runs:/{run_id}/model"
+
+            # Register the model
+            model_version = mlflow.register_model(
+                model_uri=model_uri,
+                name=model_name,
+                description=description
+            )
 
             # Transition to specified stage
-            import mlflow.tracking
-            client = mlflow.tracking.MlflowClient()
-            latest_version = client.get_latest_versions(model_name)[0]
+            client = MlflowClient()
             client.transition_model_version_stage(
                 name=model_name,
-                version=latest_version.version,
+                version=model_version.version,
                 stage=stage
             )
-            self.logger.info(f"Model registered as {model_name} version {latest_version.version} in {stage} stage")
+
+            self.logger.info(f"Model registered: {model_name} version {model_version.version}")
+            return model_version.version
+
         except Exception as e:
             self.logger.error(f"Failed to register model: {str(e)}")
+            return None

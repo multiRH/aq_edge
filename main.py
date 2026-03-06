@@ -11,6 +11,9 @@ import torch.nn as nn
 import traceback
 from matplotlib import pyplot as plt
 from sklearn.metrics import r2_score
+import subprocess
+import json
+import pickle
 
 # Import all modules
 from aq_edge.utils.logging import LoggerHandler
@@ -21,7 +24,7 @@ from aq_edge.modelzoo.model_factory import EarlyStopping
 from aq_edge.evaluation.metrics import calculate_horizon_metrics
 from aq_edge.utils.visualization import (
     plot_horizon_predictions, plot_horizon_metrics, plot_loss_curves, plot_r2_curves,
-    plot_forecast_vs_ground_truth
+    plot_forecast_vs_ground_truth, plot_single_horizon_forecast
 )
 from aq_edge.utils.mlflow_handler import MLflowHandler, generate_custom_run_name
 
@@ -87,13 +90,6 @@ if __name__ == "__main__":
 
         logger.info(f"Features for station {station}: {features}")
         logger.info(f"Target: {target}")
-
-        # MLflow: Log data info
-        mlflow_handler.log_metrics({
-            "data_shape_rows": df.shape[0],
-            "data_shape_cols": df.shape[1],
-            "num_features": len(features)
-        })
 
         # -----------------------------
         # 2. Prepare data
@@ -166,9 +162,12 @@ if __name__ == "__main__":
         criterion = nn.MSELoss()
 
         model_params = sum(p.numel() for p in model.parameters())
-        logger.info(f"Model parameters: {model_params:,}")
-        logger.info(f"Learning rate: {training_config['learning_rate']}")
-        logger.info(f"Weight decay: {training_config['weight_decay']}")
+        model_info = {
+            "model_parameters": int(model_params),
+            "learning_rate": float(training_config.get('learning_rate', 0)),
+            "weight_decay": float(training_config.get('weight_decay', 0))
+        }
+        logger.info("Model summary: %s", json.dumps(model_info))
 
         # MLflow: Log model info
         mlflow_handler.log_metrics({
@@ -176,6 +175,16 @@ if __name__ == "__main__":
             "input_size": input_size,
             "output_size": output_size
         })
+
+        # Get git commit information (move this before skip_training logic)
+        try:
+            current_commit = subprocess.check_output(['git', 'rev-parse', 'HEAD']).decode('ascii').strip()
+            commit_short = current_commit[:8]
+        except:
+            current_commit = "unknown"
+            commit_short = "unknown"
+
+        logger.info(f"Git commit: {commit_short}")
 
         # -----------------------------
         # 4. Check MLflow Model Registry
@@ -229,7 +238,7 @@ if __name__ == "__main__":
             skip_training = False
 
         # -----------------------------
-        # 4. Training Loop
+        # 5. Training Loop
         # -----------------------------
 
         if not skip_training:
@@ -335,7 +344,47 @@ if __name__ == "__main__":
 
             # Register the new model
             logger.info("Registering trained model to MLflow registry...")
-            mlflow_handler.register_model(model, model_name, "Production")
+
+            # Get git commit information
+            try:
+                current_commit = subprocess.check_output(['git', 'rev-parse', 'HEAD']).decode('ascii').strip()
+                commit_short = current_commit[:8]
+            except:
+                current_commit = "unknown"
+                commit_short = "unknown"
+
+            # Enhanced model description with metadata
+            model_description = f"""Air Quality Prediction Model for {station}
+
+            Model Details:
+            - Type: {model_type}
+            - Epochs Trained: {len(train_losses)}
+            - Final Train Loss: {train_losses[-1]:.6f}
+            - Final Val Loss: {val_losses[-1]:.6f}
+            - Early Stopping: {'Yes' if early_stopping.early_stop else 'No'}
+            - Git Commit: {commit_short}
+
+            Training Configuration:
+            - Learning Rate: {training_config['learning_rate']}
+            - Batch Size: {training_config['batch_size']}
+            - Input Sequence Length: {preprocessing_config['input_sequence_length']}
+            - Output Sequence Length: {preprocessing_config['output_sequence_length']}
+            """
+
+            # Register with description
+            registered_version = mlflow_handler.register_model(
+                model,
+                model_name,
+                "Production",
+                description=model_description.strip()
+            )
+
+            # Log final model version
+            mlflow_handler.log_tags({
+                "registered_version": str(registered_version) if registered_version else "unknown"
+            })
+
+            logger.info(f"Model registered as version: {registered_version}")
 
         else:
             logger.info("Skipping training - using model from registry")
@@ -344,7 +393,7 @@ if __name__ == "__main__":
             train_r2_scores, val_r2_scores = [], []
 
         # -----------------------------
-        # 5. Test Evaluation
+        # 6. Test Evaluation
         # -----------------------------
         logger.info("Starting test evaluation...")
         model.eval()
@@ -381,7 +430,7 @@ if __name__ == "__main__":
         mlflow_handler.log_predictions(predictions, targets)
 
         # -----------------------------
-        # 6. Visualization
+        # 7. Visualization
         # -----------------------------
         logger.info("Creating visualizations...")
         viz_config = config.get_section('visualization')
@@ -438,23 +487,39 @@ if __name__ == "__main__":
             test_timestamps = prepared_data['test_timestamps']
             y_test_seq = prepared_data['y_test_seq']
 
-            fig_forecast = plot_forecast_vs_ground_truth(
-                timestamps=test_timestamps,
-                ground_truth=targets,
-                forecasts=predictions,
-                horizons=[1, 3, 9, 12],
-                figsize=(15, 10),
-                title=f"Forecast vs Ground Truth - {station}"
-            )
+            # fig_forecast = plot_forecast_vs_ground_truth(
+            horizons = config.get('visualization.horizons')
+            for horizon in horizons:
+                # Unpack both matplotlib and plotly figures
+                fig_mpl, fig_plotly = plot_single_horizon_forecast(
+                    timestamps=test_timestamps,
+                    ground_truth=targets,
+                    forecasts=predictions,
+                    horizon=horizon,
+                    figsize=(15, 10),
+                    save_path=f"{plot_dir}/forecast_h{horizon}_{station}",
+                    title=f"Forecast vs Ground Truth - {station} - Horizon {horizon}"
+                )
 
-            if viz_config.get('save_plots', False):
-                forecast_plot_path = f"{plot_dir}/forecast_vs_ground_truth_{station}.png"
-                fig_forecast.savefig(forecast_plot_path, dpi=150, bbox_inches='tight')
-                logger.info(f"Forecast vs ground truth plot saved to {forecast_plot_path}")
+                # MLflow: Log both plots
+                mlflow_handler.log_plot(fig_mpl, f"forecast_vs_ground_truth_h{horizon}_static")
 
-            # MLflow: Log forecast plot
-            mlflow_handler.log_plot(fig_forecast, "forecast_vs_ground_truth")
-            plt.show()
+                # For plotly, you may need to save and log the HTML file
+                plotly_html_path = f"{plot_dir}/forecast_h{horizon}_{station}.html"
+                mlflow_handler.log_artifact(plotly_html_path, "interactive_plots")
+
+                logger.info(f"Horizon {horizon} plots created and saved")
+                plt.show()
+                plt.close(fig_mpl)  # Close matplotlib figure to free memory
+
+            # if viz_config.get('save_plots', False):
+            #     forecast_plot_path = f"{plot_dir}/forecast_vs_ground_truth_{station}.png"
+            #     fig_forecast.savefig(forecast_plot_path, dpi=150, bbox_inches='tight')
+            #     logger.info(f"Forecast vs ground truth plot saved to {forecast_plot_path}")
+
+            # # MLflow: Log forecast plot
+            # mlflow_handler.log_plot(fig_forecast, "forecast_vs_ground_truth")
+            # plt.show()
 
         # Calculate and log horizon metrics
         logger.info("Calculating metrics per horizon...")
@@ -481,6 +546,160 @@ if __name__ == "__main__":
             title=f"Horizon Metrics - {station}"
         )
         mlflow_handler.log_plot(fig_metrics, "horizon_metrics")
+
+        # -----------------------------
+        # 7. Store Artifacts and Metadata
+        # -----------------------------
+
+        logger.info("Storing model artifacts and metadata...")
+
+        # Store original dataset as MLflow artifact
+        logger.info("Storing original dataset as artifact...")
+        original_dataset_dir = f"{plot_dir}/original_data"
+        os.makedirs(original_dataset_dir, exist_ok=True)
+
+        # Save the original loaded dataframe
+        original_data_path = f"{original_dataset_dir}/original_data_{station}.parquet"
+        df.to_parquet(original_data_path, index=False)
+        mlflow_handler.log_artifact(original_data_path, "original_data")
+        logger.info(f"Original dataset saved to {original_data_path}")
+
+        # Save the processed dataframe (after dropping columns)
+        processed_data_path = f"{original_dataset_dir}/processed_data_{station}.parquet"
+        data.to_parquet(processed_data_path, index=False)
+        mlflow_handler.log_artifact(processed_data_path, "original_data")
+        logger.info(f"Processed dataset saved to {processed_data_path}")
+
+        # Save dataset metadata
+        dataset_metadata = {
+            "station": station,
+            "original_shape": df.shape,
+            "processed_shape": data.shape,
+            "original_columns": df.columns.tolist(),
+            "processed_columns": data.columns.tolist(),
+            "dropped_columns": drop_columns,
+            "features": features,
+            "target": target,
+            "data_path": data_path,
+            "date_range": {
+                "start": str(data.index.min()) if hasattr(data.index, 'min') else "unknown",
+                "end": str(data.index.max()) if hasattr(data.index, 'max') else "unknown"
+            }
+        }
+
+        dataset_metadata_path = f"{original_dataset_dir}/dataset_metadata_{station}.json"
+        with open(dataset_metadata_path, 'w') as f:
+            json.dump(dataset_metadata, f, indent=2, default=str)
+        mlflow_handler.log_artifact(dataset_metadata_path, "original_data")
+        logger.info(f"Dataset metadata saved to {dataset_metadata_path}")
+
+        # MLflow: Log data info
+        mlflow_handler.log_metrics({
+            "data_shape_rows": df.shape[0],
+            "data_shape_cols": df.shape[1],
+            "num_features": len(features)
+        })
+
+        # Get station name from config
+        station = config.get('data.station')
+
+        # Prepare metadata
+        metadata = {
+            "git_commit": current_commit,
+            "git_commit_short": commit_short,
+            "model_version": model_version if model_version else "new",
+            "early_stopping_triggered": early_stopping.early_stop if not skip_training else False,
+            "last_epoch": early_stopping.counter if not skip_training else 0,
+            "total_epochs_trained": len(train_losses) if not skip_training else 0,
+            "station": station,
+            "model_type": model_type,
+            "training_config": training_config,
+            "preprocessing_config": preprocessing_config,
+            "final_train_loss": train_losses[-1] if not skip_training and train_losses else None,
+            "final_val_loss": val_losses[-1] if not skip_training and val_losses else None,
+            "model_name": model_name
+        }
+
+        # Log metadata as MLflow tags
+        mlflow_handler.log_tags({
+            "git_commit": commit_short,
+            "model_version": str(metadata["model_version"]),
+            "early_stopping": str(metadata["early_stopping_triggered"]),
+            "last_epoch": str(metadata["last_epoch"]),
+            "station": station,
+            "model_type": model_type
+        })
+
+        # Create artifacts directory
+        artifacts_dir = f"{plot_dir}/artifacts"
+        os.makedirs(artifacts_dir, exist_ok=True)
+
+        # Save metadata as JSON artifact
+        metadata_path = f"{artifacts_dir}/training_metadata.json"
+        with open(metadata_path, 'w') as f:
+            json.dump(metadata, f, indent=2, default=str)
+        mlflow_handler.log_artifact(metadata_path, "metadata")
+        logger.info(f"Training metadata saved to {metadata_path}")
+
+        # Save model weights as artifact
+        if not skip_training:
+            #model_weights_path = f"{artifacts_dir}/model_weights_{station}_{model_type}.pth"
+            model_weights_path = f"{artifacts_dir}/{model_name}.pth"
+            torch.save(model.state_dict(), model_weights_path)
+            mlflow_handler.log_artifact(model_weights_path, "model_weights")
+            logger.info(f"Model weights saved to {model_weights_path}")
+
+        # Save scaler as artifact
+        scaler_path = f"{artifacts_dir}/scaler_{station}.pkl"
+        with open(scaler_path, 'wb') as f:
+            pickle.dump(prepared_data['scaler'], f)
+        mlflow_handler.log_artifact(scaler_path, "preprocessing")
+        logger.info(f"Scaler saved to {scaler_path}")
+
+        # Save processed datasets as artifacts
+        datasets_dir = f"{artifacts_dir}/datasets"
+        os.makedirs(datasets_dir, exist_ok=True)
+
+        # Save train/val/test data splits
+        np.save(f"{datasets_dir}/X_train.npy", prepared_data['X_train'])
+        np.save(f"{datasets_dir}/y_train.npy", prepared_data['y_train'])
+        np.save(f"{datasets_dir}/X_val.npy", prepared_data['X_val'])
+        np.save(f"{datasets_dir}/y_val.npy", prepared_data['y_val'])
+        np.save(f"{datasets_dir}/X_test.npy", prepared_data['X_test'])
+        np.save(f"{datasets_dir}/y_test.npy", prepared_data['y_test'])
+
+        # Save timestamps
+        with open(f"{datasets_dir}/test_timestamps.pkl", 'wb') as f:
+            pickle.dump(prepared_data['test_timestamps'], f)
+
+        mlflow_handler.log_artifact(datasets_dir, "datasets")
+        logger.info(f"Dataset splits saved to {datasets_dir}")
+
+        # Save predictions and targets from test evaluation
+        results_dir = f"{artifacts_dir}/results"
+        os.makedirs(results_dir, exist_ok=True)
+
+        if 'predictions' in locals() and 'targets' in locals():
+            np.save(f"{results_dir}/test_predictions.npy", predictions)
+            np.save(f"{results_dir}/test_targets.npy", targets)
+
+        if 'horizon_metrics' in locals():
+            with open(f"{results_dir}/horizon_metrics.pkl", 'wb') as f:
+                pickle.dump(horizon_metrics, f)
+
+        # Save training history if available
+        if not skip_training and 'train_losses' in locals():
+            training_history = {
+                'train_losses': train_losses,
+                'val_losses': val_losses,
+                'train_r2_scores': train_r2_scores if 'train_r2_scores' in locals() else [],
+                'val_r2_scores': val_r2_scores if 'val_r2_scores' in locals() else []
+            }
+            with open(f"{results_dir}/training_history.pkl", 'wb') as f:
+                pickle.dump(training_history, f)
+
+        mlflow_handler.log_artifact(results_dir, "results")
+        logger.info(f"Results saved to {results_dir}")
 
         # MLflow: Log the trained model
         logger.info("Logging trained model to MLflow...")
