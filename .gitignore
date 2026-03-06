@@ -15,6 +15,12 @@ solar_forecasting/best_solar_model.pth
 config.yaml
 .env
 test.py
+notebooks/*.csv
+notebooks/*.parquet
+notebooks/__archive
+notebooks/datasets
+notebooks/sequences
+notebooks/checkpoints
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
