@@ -15,6 +15,7 @@ solar_forecasting/best_solar_model.pth
 config.yaml
 .env
 test.py
+notebooks
 notebooks/*.csv
 notebooks/*.parquet
 notebooks/__archive
