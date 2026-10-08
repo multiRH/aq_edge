@@ -1,9 +1,9 @@
 # Custom
+__archive/
 logs/
 mlruns/
 mlartifacts/
 models/
-plots/
 weights/
 data/
 experimental/calibration_results
@@ -14,7 +14,7 @@ solar_forecasting/best_solar_model.pth
 *.parquet
 config.yaml
 .env
-test.py
+__archive/test.py
 # notebooks
 notebooks/*.csv
 notebooks/*.parquet
@@ -22,6 +22,7 @@ notebooks/__archive
 notebooks/datasets
 notebooks/sequences
 notebooks/checkpoints
+notebooks/plots/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
