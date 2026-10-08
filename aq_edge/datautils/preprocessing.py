@@ -51,6 +51,9 @@ def load_station_data(
             if len(df) < initial_count:
                 logger.warning(f"  Removed {initial_count - len(df)} rows with invalid timestamps")
 
+            # Set 'Timestamp' as the index
+            df.set_index('Timestamp', inplace=True)
+
             df['Station'] = station
             station_data[station] = df
             all_data.append(df)
