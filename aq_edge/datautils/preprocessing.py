@@ -320,7 +320,7 @@ def prepare_data(
 
     # Step 3: Split X and y from scaled arrays
     X_train, y_train, X_val, y_val, X_test, y_test = split_train_val_test_X_y(
-        train_data, val_data, test_data, features, target
+        train_scaled, val_scaled, test_scaled, features, target
     )
 
     # Step 4: Get timestamps
@@ -330,13 +330,13 @@ def prepare_data(
 
     # Step 5: Create sequences
     X_train_seq, y_train_seq, train_input_timestamps, train_output_timestamps = create_sequences(
-        X_train, y_train, train_timestamps, input_sequence_length, output_sequence_length
+        X_train, y_train, train_data.index, input_sequence_length, output_sequence_length
     )
     X_val_seq, y_val_seq, val_input_timestamps, val_output_timestamps = create_sequences(
-        X_val, y_val, val_timestamps, input_sequence_length, output_sequence_length
+        X_val, y_val, val_data.index, input_sequence_length, output_sequence_length
     )
     X_test_seq, y_test_seq, test_input_timestamps, test_output_timestamps = create_sequences(
-        X_test, y_test, test_timestamps, input_sequence_length, output_sequence_length
+        X_test, y_test, test_data.index, input_sequence_length, output_sequence_length
     )
 
     # Step 6: Create datasets and dataloaders
@@ -350,6 +350,7 @@ def prepare_data(
     return {
         'X_train': X_train, 'y_train': y_train,
         'X_val': X_val, 'y_val': y_val,
+
         'X_test': X_test, 'y_test': y_test,
         'train_timestamps': train_timestamps,
         'val_timestamps': val_timestamps,

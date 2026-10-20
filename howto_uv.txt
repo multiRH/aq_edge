@@ -1,0 +1,25 @@
+
+# Windows in pycharm
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+
+uv --Version
+
+uv venv --python 3.14                                                                                                                                
+
+.venv\Scripts\activate  
+
+uv pip install -r requirements.txt 
+
+
+# If pyproject.toml and uv.lock
+
+uv sync 
+
+uv add <pkg>
+ 
+uv remove <pkg> 
+
+uv run main.py to run scripts in the Environment
+
+
+uv run mlflow ui --backend-store-uri sqlite:///mlflow.db

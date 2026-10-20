@@ -24,6 +24,10 @@ notebooks/datasets
 notebooks/sequences
 notebooks/checkpoints
 notebooks/plots/
+example/
+mlflow.db
+plots/
+
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
