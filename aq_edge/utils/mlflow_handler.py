@@ -141,6 +141,20 @@ class MLflowHandler:
                 except Exception:
                     pass
 
+
+    def log_params(self, params: Dict[str, Any]) -> bool:
+        """Log parameters to MLflow."""
+        if not self.enabled or not self.run_started:
+            return False
+
+        def _log():
+            for name, value in params.items():
+                mlflow.log_param(str(name)[:250], str(value)[:500])
+            return True
+
+        return self._safe_execute(_log)
+
+
     def log_metrics(self, metrics: Dict[str, float], step: Optional[int] = None) -> bool:
         """Log metrics to MLflow."""
         if not self.enabled or not self.run_started:

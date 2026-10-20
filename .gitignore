@@ -27,7 +27,7 @@ notebooks/plots/
 example/
 mlflow.db
 plots/
-
+optuna_results/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
