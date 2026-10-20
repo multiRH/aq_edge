@@ -78,18 +78,17 @@ def split_data(
     val_end_timestamp: pd.Timestamp
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
-    Split data into train, validation, and test sets using fixed timestamps.
-
-    Args:
-        data (pd.DataFrame): DataFrame with datetime index
-        train_end_timestamp (pd.Timestamp): Last timestamp for training set (inclusive)
-        val_end_timestamp (pd.Timestamp): Last timestamp for validation set (inclusive)
-
-    Returns:
-        Tuple: train_data, val_data, test_data
+    (docstring unchanged)
     """
-    train_end = pd.Timestamp(train_end_timestamp)
-    val_end = pd.Timestamp(val_end_timestamp)
+    def _match_tz(ts):
+        # Make the cutoff timezone-compatible with the index (naive cutoffs are taken as UTC)
+        ts = pd.Timestamp(ts)
+        if data.index.tz is not None:
+            return ts.tz_localize(data.index.tz) if ts.tzinfo is None else ts.tz_convert(data.index.tz)
+        return ts.tz_convert(None) if ts.tzinfo is not None else ts
+
+    train_end = _match_tz(train_end_timestamp)
+    val_end = _match_tz(val_end_timestamp)
     train = data[data.index <= train_end]
     val = data[(data.index > train_end) & (data.index <= val_end)]
     test = data[data.index > val_end]
@@ -303,6 +302,10 @@ def prepare_data(
         train_data, val_data, test_data, scaler=scaler
     )
 
+    train_scaled = pd.DataFrame(train_scaled, columns=all_cols, index=train_data.index)
+    val_scaled = pd.DataFrame(val_scaled, columns=all_cols, index=val_data.index)
+    test_scaled = pd.DataFrame(test_scaled, columns=all_cols, index=test_data.index)
+
     # Step 3: Split X and y from scaled arrays
     X_train, y_train, X_val, y_val, X_test, y_test = split_train_val_test_X_y(
         train_scaled, val_scaled, test_scaled, features, target
@@ -314,14 +317,14 @@ def prepare_data(
     test_timestamps = test_data.index
 
     # Step 5: Create sequences
-    X_train_seq, y_train_seq, train_input_timestamps, train_output_timestamps = create_sequences(
-        X_train, y_train, train_data.index, input_sequence_length, output_sequence_length
+    X_train_seq, y_train_seq, ... = create_sequences(
+        X_train.values, y_train.values, train_data.index, input_sequence_length, output_sequence_length
     )
     X_val_seq, y_val_seq, val_input_timestamps, val_output_timestamps = create_sequences(
-        X_val, y_val, val_data.index, input_sequence_length, output_sequence_length
+        X_val.values, y_val.values, val_data.index, input_sequence_length, output_sequence_length
     )
     X_test_seq, y_test_seq, test_input_timestamps, test_output_timestamps = create_sequences(
-        X_test, y_test, test_data.index, input_sequence_length, output_sequence_length
+        X_test.values, y_test.values, test_data.index, input_sequence_length, output_sequence_length
     )
 
     # Step 6: Create datasets and dataloaders
