@@ -3,20 +3,18 @@
 Data Preprocessing Module for Air Quality Analysis
 Contains functions for data preparation, scaling, sequence creation, and dataloader setup
 """
+import warnings
+from typing import Dict, Tuple, List, Optional, Any
 
 import pandas as pd
 import numpy as np
 import torch
 from torch.utils.data import Dataset, DataLoader, TensorDataset
 from sklearn.preprocessing import MinMaxScaler, StandardScaler, RobustScaler
-from typing import Dict, Tuple, List, Optional, Any
-import warnings
-warnings.filterwarnings('ignore')
 
-# Import logger from utils
 from aq_edge.utils.logging import LoggerHandler
 
-# Initialize logger with the actual module name
+warnings.filterwarnings('ignore')
 logger = LoggerHandler('preprocessing')
 
 def load_station_data(
@@ -90,47 +88,34 @@ def split_data(
     Returns:
         Tuple: train_data, val_data, test_data
     """
-    train_data = data[data.index <= train_end_timestamp]
-    val_data = data[(data.index > train_end_timestamp) & (data.index <= val_end_timestamp)]
-    test_data = data[data.index > val_end_timestamp]
-    return train_data, val_data, test_data
+    train_end = pd.Timestamp(train_end_timestamp)
+    val_end = pd.Timestamp(val_end_timestamp)
+    train = data[data.index <= train_end]
+    val = data[(data.index > train_end) & (data.index <= val_end)]
+    test = data[data.index > val_end]
+    return train, val, test
+
+def _make_scaler(name: str):
+    scalers = {"minmax": MinMaxScaler, "standard": StandardScaler, "robust": RobustScaler}
+    if name.lower() not in scalers:
+        raise ValueError(f"Unsupported scaler type: {name}. Use 'minmax', 'standard', or 'robust'.")
+    return scalers[name.lower()]()
 
 def scale_data(
     train_data: pd.DataFrame,
     val_data: pd.DataFrame,
     test_data: pd.DataFrame,
-    scaler: str
+    scaler: str,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Any]:
-    """
-    Scale data using different scalers, fitting only on training data.
-
-    Args:
-        train_data (pd.DataFrame): Training data
-        val_data (pd.DataFrame): Validation data
-        test_data (pd.DataFrame): Test data
-        scaler (str): Type of scaler ('minmax', 'standard', 'robust')
-
-    Returns:
-        Tuple: scaled_train_data, scaled_val_data, scaled_test_data, train_scaler
-    """
-
-    # Initialize scaler based on type
-    if scaler.lower() == 'minmax':
-        train_scaler = MinMaxScaler()
-    elif scaler.lower() == 'standard':
-        train_scaler = StandardScaler()
-    elif scaler.lower() == 'robust':
-        train_scaler = RobustScaler()
-    else:
-        raise ValueError(f"Unsupported scaler type: {scaler}. Use 'minmax', 'standard', or 'robust'.")
-
-    logger.info(f"\n[OK] scaler: {scaler}")
-    # Fit scaler on training data and transform all datasets
-    scaled_train_data = train_scaler.fit_transform(train_data)
-    scaled_val_data = train_scaler.transform(val_data)
-    scaled_test_data = train_scaler.transform(test_data)
-
-    return scaled_train_data, scaled_val_data, scaled_test_data, train_scaler
+    """Fit the scaler on train only, transform all three splits."""
+    train_scaler = _make_scaler(scaler)
+    logger.info(f"[OK] scaler: {scaler}")
+    return (
+        train_scaler.fit_transform(train_data),
+        train_scaler.transform(val_data),
+        train_scaler.transform(test_data),
+        train_scaler,
+    )
 
 def split_train_val_test_X_y(
         train_data: pd.DataFrame,

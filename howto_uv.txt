@@ -22,4 +22,19 @@ uv remove <pkg>
 uv run main.py to run scripts in the Environment
 
 
+# for mlflow
 uv run mlflow ui --backend-store-uri sqlite:///mlflow.db
+
+# for google-colab-cli 
+# install in the terminal
+wsl --install 
+
+# open ubuntu
+cd /mnt/d/dly/aq_edge
+
+curl -LsSf https://astral.sh/uv/install.sh | sh
+uv tool install google-colab-cli
+
+colab whoami
+colab run --gpu T4 main.py
+colab stop
