@@ -139,16 +139,31 @@ if __name__ == "__main__":
         device = torch.device("cuda" if torch.cuda.is_available() and use_cuda else "cpu")
         logger.info(f"Using device: {device}")
 
-        model_type = config.get('model.type', 'AttentionLSTM')
+        model_config = config.get_section('model')
+        model_type = model_config.get('type', 'AttentionLSTM')
         input_size = len(features)
         output_size = preprocessing_config['output_sequence_length']
 
-        if model_type == 'AttentionLSTM':
-            model = AttentionLSTM(input_size=input_size, output_size=output_size).to(device)
-        else:
-            model = BaseLSTM(input_size=input_size, output_size=output_size).to(device)
+        model_kwargs = {
+            key: model_config[key]
+            for key in ('hidden_size', 'num_layers', 'dropout')
+            if model_config.get(key) is not None
+        }
 
-        logger.info(f"Model type: {model_type}")
+        if model_type == 'AttentionLSTM':
+            model_cls = AttentionLSTM
+        elif model_type == 'BaseLSTM':
+            model_cls = BaseLSTM
+        else:
+            raise ValueError(f"Unsupported model type: {model_type}")
+
+        model = model_cls(
+            input_size=input_size,
+            output_size=output_size,
+            **model_kwargs
+        ).to(device)
+
+        logger.info(f"Model type: {model_type}, parameters: {model_kwargs}")
         logger.info(f"Input size: {input_size}")
         logger.info(f"Output size: {output_size}")
 

@@ -11,6 +11,7 @@ solar_forecasting/best_solar_model.pth
 *.csv
 *.pdf
 *.html
+*.png
 *.parquet
 config.yaml
 .env
