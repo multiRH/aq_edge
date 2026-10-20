@@ -317,7 +317,7 @@ def prepare_data(
     test_timestamps = test_data.index
 
     # Step 5: Create sequences
-    X_train_seq, y_train_seq, ... = create_sequences(
+    X_train_seq, y_train_seq, train_input_timestamps, train_output_timestamps = create_sequences(
         X_train.values, y_train.values, train_data.index, input_sequence_length, output_sequence_length
     )
     X_val_seq, y_val_seq, val_input_timestamps, val_output_timestamps = create_sequences(
