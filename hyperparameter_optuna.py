@@ -375,11 +375,8 @@ def main():
             errors="ignore",
         ).copy()
 
-        features = config.get(
-            "data.features",
-            ["temperature", "humidity", "voc"],
-        )
-        target = config.get("data.target", "CO2")
+        features = config.get("data.features")
+        target = config.get("data.target")
 
         # Historical CO2 is useful as an input for autoregressive
         # forecasting. Include it only if present and intended.
@@ -539,7 +536,7 @@ def main():
                 ],
                 scaler_name=params["scaler"],
             )
-
+            print("++++++++++{features}+++++++++")
             model, metrics = train_trial(
                 trial=trial,
                 prepared_data=prepared_data,
