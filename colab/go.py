@@ -12,7 +12,7 @@ import urllib.request
 # ---- settings ---------------------------------------------------------------
 PROJECT = "/content/drive/MyDrive/repositories/aq_edge"
 ENTRY = "main.py"                                   # entry script inside PROJECT
-PIP_PACKAGES = ["neuralhydrology", "mlflow"]        # packages Colab does not have
+PIP_PACKAGES = ["mlflow"]        # packages Colab does not have
 MLFLOW_PORT = 5000                                  # must match your code/config
 MLFLOW_DB = "/content/mlflow.db"                    # local disk (SQLite is unreliable on Drive)
 MLFLOW_ARTIFACTS = "/content/mlartifacts"
