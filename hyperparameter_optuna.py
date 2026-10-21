@@ -32,17 +32,6 @@ from aq_edge.utils.mlflow_handler import MLflowHandler, generate_custom_run_name
 # Configuration
 # ============================================================
 
-# SCALER_OPTIONS = ["robust", "standard", "minmax"]
-#
-# INPUT_LENGTHS = [12, 24, 48, 96, 144]
-# OUTPUT_LENGTHS = [1, 6, 12, 24]
-#
-# BATCH_SIZES = [32, 64, 128]
-# HIDDEN_SIZES = [32, 64, 96, 128, 256]
-#
-# DEFAULT_SEED = 42
-
-
 def set_seed(seed: int) -> None:
     random.seed(seed)
     np.random.seed(seed)
@@ -56,6 +45,7 @@ REQUIRED_SEARCH_PARAMETERS = {
     "learning_rate", "weight_decay", "use_reduce_on_plateau",
     "scheduler_factor", "scheduler_patience", "early_stopping_patience",
     "num_epochs", "input_sequence_length", "output_sequence_length", "scaler",
+    "scheduler_min_lr", "grad_clip_max_norm",
 }
 
 
@@ -173,7 +163,7 @@ def prepare_trial_data(
 def build_model(params, input_size, output_size, device):
     model_classes = {
         "BaseLSTM": BaseLSTM,
-        #"AttentionLSTM": AttentionLSTM,
+        "AttentionLSTM": AttentionLSTM,
     }
 
     model_cls = model_classes[params["model_type"]]
@@ -269,7 +259,7 @@ def train_trial(
             mode="min",
             factor=params["scheduler_factor"],
             patience=params["scheduler_patience"],
-            min_lr=1e-7,
+            min_lr=params["scheduler_min_lr"],
         )
 
     early_stopping = EarlyStopping(
@@ -301,7 +291,7 @@ def train_trial(
             # Helps stabilize recurrent-network training.
             torch.nn.utils.clip_grad_norm_(
                 model.parameters(),
-                max_norm=1.0,
+                max_norm=params["grad_clip_max_norm"],
             )
 
             optimizer.step()
@@ -471,12 +461,21 @@ def main():
         )
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        study_name = f"co2_{station}_base_lstm_test"
+        study_name = config.get(
+            "optuna.study_name",
+            "co2_{station}_forecast_optimization",
+        ).format(station=station)
+
+        storage_uri = config.get(
+            "optuna.storage",
+            "sqlite:///optuna_results/co2_{station}_forecast_optimization.db",
+        ).format(station=station)
+
         storage_path = (output_dir / f"{study_name}.db").resolve()
 
         study = optuna.create_study(
             study_name=study_name,
-            storage=f"sqlite:///{storage_path.as_posix()}",
+            storage=storage_uri,
             direction="maximize",
             load_if_exists=True,
             sampler=optuna.samplers.TPESampler(seed=seed),

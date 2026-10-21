@@ -176,6 +176,18 @@ if __name__ == "__main__":
         )
         criterion = nn.MSELoss()
 
+        scheduler = None
+        if training_config.get("use_reduce_on_plateau", True):
+            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+                optimizer,
+                mode="min",
+                factor=training_config.get("scheduler_factor", 0.5),
+                patience=training_config.get("scheduler_patience", 3),
+                min_lr=training_config.get("scheduler_min_lr", 1e-7),
+            )
+
+        grad_clip_max_norm = training_config.get("grad_clip_max_norm", 1.0)
+
         model_params = sum(p.numel() for p in model.parameters())
         model_info = {
             "model_parameters": int(model_params),
@@ -291,6 +303,10 @@ if __name__ == "__main__":
 
                     loss = criterion(out, yb)
                     loss.backward()
+                    torch.nn.utils.clip_grad_norm_(
+                        model.parameters(),
+                        max_norm=grad_clip_max_norm,
+                    )
                     optimizer.step()
                     batch_losses.append(loss.item())
 
@@ -329,6 +345,8 @@ if __name__ == "__main__":
                         val_targets_epoch.append(yb.cpu().numpy())
 
                 val_loss = np.mean(val_batch_losses)
+                if scheduler is not None:
+                    scheduler.step(val_loss)
                 val_losses.append(val_loss)
 
                 # Calculate validation R²
