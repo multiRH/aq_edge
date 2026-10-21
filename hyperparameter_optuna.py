@@ -378,16 +378,6 @@ def main():
         features = config.get("data.features")
         target = config.get("data.target")
 
-        # Historical CO2 is useful as an input for autoregressive
-        # forecasting. Include it only if present and intended.
-        include_target_history = config.get(
-            "optuna.include_target_history",
-            True,
-        )
-
-        if include_target_history and target not in features:
-            features = [target] + list(features)
-
         missing = [
             col for col in list(features) + [target]
             if col not in data.columns
