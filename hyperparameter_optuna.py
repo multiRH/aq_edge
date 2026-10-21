@@ -32,15 +32,15 @@ from aq_edge.utils.mlflow_handler import MLflowHandler, generate_custom_run_name
 # Configuration
 # ============================================================
 
-SCALER_OPTIONS = ["robust", "standard", "minmax"]
-
-INPUT_LENGTHS = [12, 24, 48, 96, 144]
-OUTPUT_LENGTHS = [1, 6, 12, 24]
-
-BATCH_SIZES = [32, 64, 128]
-HIDDEN_SIZES = [32, 64, 96, 128, 256]
-
-DEFAULT_SEED = 42
+# SCALER_OPTIONS = ["robust", "standard", "minmax"]
+#
+# INPUT_LENGTHS = [12, 24, 48, 96, 144]
+# OUTPUT_LENGTHS = [1, 6, 12, 24]
+#
+# BATCH_SIZES = [32, 64, 128]
+# HIDDEN_SIZES = [32, 64, 96, 128, 256]
+#
+# DEFAULT_SEED = 42
 
 
 def set_seed(seed: int) -> None:
@@ -50,6 +50,46 @@ def set_seed(seed: int) -> None:
 
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
+
+REQUIRED_SEARCH_PARAMETERS = {
+    "model_type", "hidden_size", "num_layers", "dropout", "batch_size",
+    "learning_rate", "weight_decay", "use_reduce_on_plateau",
+    "scheduler_factor", "scheduler_patience", "early_stopping_patience",
+    "num_epochs", "input_sequence_length", "output_sequence_length", "scaler",
+}
+
+
+def suggest_trial_params(trial, search_space):
+    if not isinstance(search_space, dict):
+        raise TypeError("optuna.search_space in config.yaml must be a mapping.")
+
+    missing = REQUIRED_SEARCH_PARAMETERS - search_space.keys()
+    if missing:
+        raise ValueError(
+            f"Missing Optuna search-space parameters: {sorted(missing)}"
+        )
+
+    params = {}
+    for name, spec in search_space.items():
+        if not isinstance(spec, dict):
+            raise TypeError(f"Search-space definition for {name!r} must be a mapping.")
+
+        kind = spec.get("type")
+        if kind == "categorical":
+            choices = spec.get("choices")
+            if not isinstance(choices, list) or not choices:
+                raise ValueError(f"{name!r} must have a non-empty choices list.")
+            params[name] = trial.suggest_categorical(name, choices)
+        elif kind == "int":
+            kwargs = {key: spec[key] for key in ("step", "log") if key in spec}
+            params[name] = trial.suggest_int(name, spec["low"], spec["high"], **kwargs)
+        elif kind == "float":
+            kwargs = {key: spec[key] for key in ("step", "log") if key in spec}
+            params[name] = trial.suggest_float(name, spec["low"], spec["high"], **kwargs)
+        else:
+            raise ValueError(f"Unsupported type {kind!r} for search parameter {name!r}.")
+
+    return params
 
 
 # ============================================================
@@ -347,15 +387,16 @@ def main():
     try:
         config = ConfigHandler()
 
-        seed = config.get("training.random_seed", DEFAULT_SEED)
+        seed = config.get("training.random_seed")
         set_seed(seed)
 
-        use_cuda = config.get("device.use_cuda", True)
         device = torch.device(
             "cuda"
-            if torch.cuda.is_available() and use_cuda
+            if torch.cuda.is_available()
             else "cpu"
         )
+
+        search_space = config.get("optuna.search_space")
 
         logger.info("Device: %s", device)
 
@@ -448,62 +489,7 @@ def main():
         def objective(trial):
             set_seed(seed + trial.number)
 
-            params = {
-                "model_type": trial.suggest_categorical(
-                    "model_type",
-                    ["BaseLSTM"],#, "AttentionLSTM"],
-                ),
-                "hidden_size": trial.suggest_categorical(
-                    "hidden_size",
-                    HIDDEN_SIZES,
-                ),
-                "num_layers": trial.suggest_int(
-                    "num_layers", 1, 3
-                ),
-                "dropout": trial.suggest_float(
-                    "dropout", 0.0, 0.4
-                ),
-                "batch_size": trial.suggest_categorical(
-                    "batch_size", BATCH_SIZES
-                ),
-                "learning_rate": trial.suggest_float(
-                    "learning_rate",
-                    1e-5,
-                    3e-3,
-                    log=True,
-                ),
-                "weight_decay": trial.suggest_float(
-                    "weight_decay",
-                    1e-7,
-                    1e-3,
-                    log=True,
-                ),
-                "use_reduce_on_plateau": trial.suggest_categorical(
-                    "use_reduce_on_plateau",
-                    [True, False],
-                ),
-                "scheduler_factor": trial.suggest_float(
-                    "scheduler_factor", 0.2, 0.7
-                ),
-                "scheduler_patience": trial.suggest_int(
-                    "scheduler_patience", 2, 6
-                ),
-                "early_stopping_patience": trial.suggest_int(
-                    "early_stopping_patience", 5, 12
-                ),
-                "num_epochs": trial.suggest_int(
-                    "num_epochs", 20, 100, step=10
-                ),
-                "input_sequence_length": trial.suggest_categorical(
-                    "input_sequence_length", INPUT_LENGTHS
-                ),
-                "output_sequence_length": trial.suggest_categorical(
-                    "output_sequence_length", OUTPUT_LENGTHS
-                ),
-                "scaler": trial.suggest_categorical(
-                    "scaler", SCALER_OPTIONS
-                ),
-            }
+            params = suggest_trial_params(trial, search_space)
 
             logger.info(
                 "Trial %d/%d parameters: %s",
@@ -526,7 +512,7 @@ def main():
                 ],
                 scaler_name=params["scaler"],
             )
-            print("++++++++++{features}+++++++++")
+
             model, metrics = train_trial(
                 trial=trial,
                 prepared_data=prepared_data,
