@@ -1,4 +1,5 @@
 import argparse
+import json
 import os
 from typing import Any, Dict, Iterator, Optional
 
@@ -6,7 +7,7 @@ import yaml
 
 
 class ConfigHandler:
-    """Load YAML configuration and apply command-line overrides."""
+    """Load YAML config, then apply optional Optuna and CLI overrides."""
 
     def __init__(
         self,
@@ -42,17 +43,26 @@ class ConfigHandler:
             with open(self.config_path, "r", encoding="utf-8") as file:
                 config = yaml.safe_load(file)
         except FileNotFoundError:
-            raise FileNotFoundError(f"Config file not found: {self.config_path}")
+            raise FileNotFoundError(
+                f"Config file not found: {self.config_path}"
+            )
         except yaml.YAMLError as error:
-            raise ValueError(f"Error parsing config file: {error}") from error
+            raise ValueError(
+                f"Error parsing config file: {error}"
+            ) from error
 
         if not isinstance(config, dict):
-            raise ValueError("The YAML configuration must contain a mapping.")
+            raise ValueError(
+                "The YAML configuration must contain a mapping."
+            )
 
         return config
 
     @staticmethod
-    def _leaf_keys(section: Dict[str, Any], prefix: str = "") -> Iterator[str]:
+    def _leaf_keys(
+        section: Dict[str, Any],
+        prefix: str = "",
+    ) -> Iterator[str]:
         """Yield dotted paths for all non-mapping configuration values."""
         for key, value in section.items():
             path = f"{prefix}.{key}" if prefix else str(key)
@@ -63,19 +73,122 @@ class ConfigHandler:
 
     def _apply_cli_overrides(self, argv: Optional[list[str]]) -> None:
         parser = argparse.ArgumentParser(
-            description="Run the application with YAML configuration overrides."
+            description="Run with YAML, optional Optuna, and CLI configuration."
         )
 
+        # Add an option for every leaf setting in the loaded config.
         for key in self._leaf_keys(self.config):
+            options = [f"--{key}"]
+            if key == "data.station":
+                options.append("--station")
+
             parser.add_argument(
-                f"--{key}",
+                *options,
                 dest=key,
                 metavar="VALUE",
                 default=argparse.SUPPRESS,
             )
 
-        for key, raw_value in vars(parser.parse_args(argv)).items():
+        parser.add_argument(
+            "--best-params",
+            dest="best_params_path",
+            metavar="JSON",
+            default=None,
+            help="Optional path to the Optuna JSON results file.",
+        )
+
+        parsed_args = vars(parser.parse_args(argv))
+        best_params_path = parsed_args.pop("best_params_path", None)
+
+        # Use the CLI station, if provided, when validating the Optuna file.
+        cli_station = parsed_args.get("data.station")
+        expected_station = (
+            yaml.safe_load(cli_station)
+            if cli_station is not None
+            else self.get("data.station")
+        )
+
+        # Apply Optuna parameters before CLI overrides.
+        if best_params_path is not None:
+            self._apply_best_params(
+                best_params_path,
+                expected_station,
+            )
+
+        # CLI values take precedence over Optuna values.
+        for key, raw_value in parsed_args.items():
             self.update(key, yaml.safe_load(raw_value))
+
+    def _apply_best_params(
+        self,
+        best_params_path: str,
+        expected_station: Optional[str] = None,
+    ) -> None:
+        """Load Optuna best parameters and apply them to the config."""
+        try:
+            with open(best_params_path, "r", encoding="utf-8") as file:
+                best_result = json.load(file)
+        except FileNotFoundError:
+            raise FileNotFoundError(
+                f"Best-parameters file not found: {best_params_path}"
+            )
+        except json.JSONDecodeError as error:
+            raise ValueError(
+                f"Invalid JSON in best-parameters file "
+                f"{best_params_path}: {error}"
+            ) from error
+
+        if not isinstance(best_result, dict):
+            raise ValueError(
+                f"Expected a JSON object in {best_params_path}"
+            )
+
+        best_params = best_result.get("best_parameters")
+        if not isinstance(best_params, dict):
+            raise ValueError(
+                f"Expected a 'best_parameters' object in {best_params_path}"
+            )
+
+        result_station = best_result.get("station")
+        station = (
+            expected_station
+            if expected_station is not None
+            else self.get("data.station")
+        )
+
+        if result_station is not None and result_station != station:
+            raise ValueError(
+                f"Optuna parameters are for station {result_station!r}, "
+                f"but the config specifies {station!r}"
+            )
+
+        config_keys = {
+            "model_type": "model.type",
+            "hidden_size": "model.hidden_size",
+            "num_layers": "model.num_layers",
+            "dropout": "model.dropout",
+            "batch_size": "training.batch_size",
+            "learning_rate": "training.learning_rate",
+            "weight_decay": "training.weight_decay",
+            "use_reduce_on_plateau": "training.use_reduce_on_plateau",
+            "scheduler_factor": "training.scheduler_factor",
+            "scheduler_patience": "training.scheduler_patience",
+            "scheduler_min_lr": "training.scheduler_min_lr",
+            "grad_clip_max_norm": "training.grad_clip_max_norm",
+            "early_stopping_patience": "training.patience",
+            "num_epochs": "training.num_epochs",
+            "input_sequence_length": (
+                "preprocessing.input_sequence_length"
+            ),
+            "output_sequence_length": (
+                "preprocessing.output_sequence_length"
+            ),
+            "scaler": "preprocessing.scaler_type",
+        }
+
+        for parameter, config_key in config_keys.items():
+            if parameter in best_params:
+                self.update(config_key, best_params[parameter])
 
     def get(self, key: str, default: Any = None) -> Any:
         """Get a configuration value using a dotted key."""
@@ -107,4 +220,8 @@ class ConfigHandler:
         """Save the current configuration as YAML."""
         path = output_path or self.config_path
         with open(path, "w", encoding="utf-8") as file:
-            yaml.safe_dump(self.config, file, default_flow_style=False)
+            yaml.safe_dump(
+                self.config,
+                file,
+                default_flow_style=False,
+            )

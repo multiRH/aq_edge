@@ -6,6 +6,8 @@ import os
 import random
 import traceback
 from pathlib import Path
+import copy
+import yaml
 
 import numpy as np
 import optuna
@@ -44,7 +46,7 @@ REQUIRED_SEARCH_PARAMETERS = {
     "model_type", "hidden_size", "num_layers", "dropout", "batch_size",
     "learning_rate", "weight_decay", "use_reduce_on_plateau",
     "scheduler_factor", "scheduler_patience", "early_stopping_patience",
-    "num_epochs", "input_sequence_length", "output_sequence_length", "scaler",
+    "num_epochs", "input_sequence_length", "scaler",
     "scheduler_min_lr", "grad_clip_max_norm",
 }
 
@@ -230,6 +232,7 @@ def train_trial(
     prepared_data,
     params,
     input_size,
+    output_sequence_length,
     device,
     logger,
 ):
@@ -239,7 +242,7 @@ def train_trial(
     model = build_model(
         params=params,
         input_size=input_size,
-        output_size=params["output_sequence_length"],
+        output_size=output_sequence_length,
         device=device,
     )
 
@@ -425,6 +428,9 @@ def main():
         data = data.replace([np.inf, -np.inf], np.nan).dropna()
 
         preprocessing_config = config.get_section("preprocessing")
+        output_sequence_length = preprocessing_config["output_sequence_length"]
+
+        logger.info("Output sequence length: %d", output_sequence_length)
 
         logger.info("Station: %s", station)
         logger.info("Features: %s", features)
@@ -463,13 +469,13 @@ def main():
 
         study_name = config.get(
             "optuna.study_name",
-            "co2_{station}_forecast_optimization",
-        ).format(station=station)
+            "co2_{station}_forecast_{output_sequence_length}_steps",
+        ).format(station=station, output_sequence_length=output_sequence_length)
 
         storage_uri = config.get(
             "optuna.storage",
-            "sqlite:///optuna_results/co2_{station}_forecast_optimization.db",
-        ).format(station=station)
+            "sqlite:///optuna_results/co2_{station}_forecast_{output_sequence_length}_steps.db",
+        ).format(station=station, output_sequence_length=output_sequence_length)
 
         storage_path = (output_dir / f"{study_name}.db").resolve()
 
@@ -506,9 +512,7 @@ def main():
                 input_sequence_length=params[
                     "input_sequence_length"
                 ],
-                output_sequence_length=params[
-                    "output_sequence_length"
-                ],
+                output_sequence_length=output_sequence_length,
                 scaler_name=params["scaler"],
             )
 
@@ -517,6 +521,7 @@ def main():
                 prepared_data=prepared_data,
                 params=params,
                 input_size=len(features),
+                output_sequence_length=output_sequence_length,
                 device=device,
                 logger=logger,
             )
@@ -559,45 +564,54 @@ def main():
         # 5. Export best configuration and all trial results
         # ----------------------------------------------------
         best_trial = study.best_trial
+        best_params = best_trial.params
 
-        best_result = {
-            "station": station,
-            "target": target,
-            "features": features,
-            "objective": "validation_r2",
-            "best_validation_r2": best_trial.value,
-            "best_parameters": best_trial.params,
-            "best_epoch": best_trial.user_attrs.get("best_epoch"),
-            "validation_metrics": best_trial.user_attrs.get(
-                "validation_metrics"
+        result_dir = output_dir / station
+        result_dir.mkdir(parents=True, exist_ok=True)
+
+        best_path = result_dir / f"best_params_{station}.json"
+        with best_path.open("w", encoding="utf-8") as f:
+            json.dump(best_params, f, indent=2)
+
+        trials_path = result_dir / f"trials_{station}.csv"
+        study.trials_dataframe().to_csv(trials_path, index=False)
+
+        config_keys = {
+            "model_type": ("model", "type"),
+            "hidden_size": ("model", "hidden_size"),
+            "num_layers": ("model", "num_layers"),
+            "dropout": ("model", "dropout"),
+            "batch_size": ("training", "batch_size"),
+            "learning_rate": ("training", "learning_rate"),
+            "weight_decay": ("training", "weight_decay"),
+            "use_reduce_on_plateau": ("training", "use_reduce_on_plateau"),
+            "scheduler_factor": ("training", "scheduler_factor"),
+            "scheduler_patience": ("training", "scheduler_patience"),
+            "scheduler_min_lr": ("training", "scheduler_min_lr"),
+            "grad_clip_max_norm": ("training", "grad_clip_max_norm"),
+            "early_stopping_patience": ("training", "patience"),
+            "num_epochs": ("training", "num_epochs"),
+            "input_sequence_length": (
+                "preprocessing", "input_sequence_length"
             ),
-            "trial_number": best_trial.number,
-            "seed": seed,
+            "scaler": ("preprocessing", "scaler_type"),
         }
 
-        best_path = output_dir / f"best_{study_name}.json"
-        with best_path.open("w", encoding="utf-8") as f:
-            json.dump(best_result, f, indent=2, default=str)
+        best_config = {}
+        for parameter, (section, key) in config_keys.items():
+            if parameter in best_params:
+                best_config.setdefault(section, {})[key] = best_params[parameter]
 
-        trials_path = output_dir / f"trials_{study_name}.csv"
-        study.trials_dataframe().to_csv(
-            trials_path,
-            index=False,
-        )
+        best_config_path = result_dir / f"config_best_params_{station}.yaml"
+        with best_config_path.open("w", encoding="utf-8") as f:
+            yaml.safe_dump(best_config, f, sort_keys=False)
 
-        logger.info(
-            "Best validation R²: %.5f",
-            best_trial.value,
-        )
-        logger.info(
-            "Best parameters: %s",
-            json.dumps(best_trial.params, indent=2),
-        )
-        logger.info("Best result saved to %s", best_path)
+        logger.info("Best parameters saved to %s", best_path)
         logger.info("Trial table saved to %s", trials_path)
+        logger.info("Best-parameter config saved to %s", best_config_path)
 
         if mlflow_handler is not None and mlflow_started:
-            mlflow_handler.log_params(best_trial.params)
+            mlflow_handler.log_params(best_params)
             mlflow_handler.log_metrics({
                 "best_validation_r2": float(best_trial.value),
                 "best_epoch": float(
@@ -606,8 +620,7 @@ def main():
             })
             mlflow_handler.log_artifact(str(best_path), "optuna")
             mlflow_handler.log_artifact(str(trials_path), "optuna")
-
-        logger.info("Optuna hyperparameter search completed.")
+            mlflow_handler.log_artifact(str(best_config_path), "optuna")
 
     except Exception as e:
         logger.error("Optuna search failed: %s", e)
